@@ -12,6 +12,14 @@ A collection of system design notes, diagrams, and architectural deep-dives for 
 
 - **[Google Docs System Design](./google-docs.md)** - Real-time collaborative editing, Operational Transform (OT), concurrent multi-user editing
 
+### Storage & File Sharing
+
+- **[Dropbox / Google Drive System Design](./google-drive.md)** - File upload/download, presigned URLs, chunking, resumable uploads, sync strategies
+
+### Video Streaming
+
+- **[YouTube System Design](./youtube.md)** - Video upload/streaming, adaptive bitrate, video processing pipeline, CDN distribution
+
 ### Location-Based Services
 
 - **[Google Maps System Design](./google-maps-learnings.md)** - Routing algorithms, graph databases, real-time traffic updates with Kafka/Flink
