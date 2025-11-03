@@ -147,21 +147,98 @@ User edits are applied locally first for responsiveness. If another user's edit 
 
 ### 2. Storage Optimization
 
-**Challenge**: Billions of documents × operations = massive storage and processing overhead.
+**The Problem**:
 
-**Solution: Operation Compaction**
+Imagine a popular document edited 10,000 times:
+- Each operation ~100 bytes
+- 10,000 ops × 100 bytes = 1 MB just for operations
+- With billions of documents → 50+ TB of storage
+- Worse: New users must download and apply ALL 10,000 operations to see current state
+- Active documents kept in memory → server RAM exhausted
 
-Options:
+**Solution: Operation Compaction (Snapshots)**
 
-1. **Periodic Snapshots**: Merge N operations into snapshot, delete old ops
-2. **Background Compaction**: Async job compacts inactive documents
-3. **Hybrid**: Recent ops + snapshot for faster loading
+Instead of storing every single operation forever, periodically create a "snapshot" of the current document state.
+
+**Example**:
+```
+Original operations in DB:
+Op 1: INSERT(0, "Hello")
+Op 2: INSERT(5, " ")
+Op 3: INSERT(6, "World")
+Op 4: DELETE(5, 1)
+Op 5: INSERT(5, ", ")
+Op 6: INSERT(7, "beautiful ")
+... (10,000 more operations)
+
+After compaction:
+Snapshot v1000: "Hello, beautiful World" (final state at operation 1000)
++ Recent ops 1001-10,000 (only last 9,000 ops)
+```
+
+**Implementation Approaches**:
+
+**1. Periodic Snapshots (Time-based)**
+- Every N minutes or N operations, create snapshot
+- Delete operations older than latest snapshot
+- Example: Snapshot every 1000 operations
+  ```
+  Snapshot at op 1000: "Hello, World"
+  Keep ops 1001-2000 in DB
+  Delete ops 1-1000
+  ```
+- **Trade-off**: Lose fine-grained history, can't revert to arbitrary points
+
+**2. Background Compaction (Activity-based)**
+- Monitor document activity
+- Compact documents that haven't been edited in X hours/days
+- Active documents keep all operations for fast collaboration
+- Inactive documents get compacted to save space
+  ```
+  Active doc (edited 5 min ago): Keep all ops
+  Inactive doc (edited 2 days ago): Compact to snapshot + recent ops
+  ```
+- **Trade-off**: More complex logic, but optimizes for common case
+
+**3. Hybrid Approach (Recommended)**
+- Store: Latest snapshot + recent operations (e.g., last 1000 ops)
+- Example structure:
+  ```
+  Document XYZ:
+    - Snapshot v5000: "Current document state..." (created 1 hour ago)
+    - Operations 5001-6000: Recent edits (last 1000 ops)
+  ```
+- **On document load**:
+  1. Fetch latest snapshot
+  2. Apply only recent operations (1000 instead of 6000!)
+  3. Much faster load time
+- **On new edit**:
+  1. Append to operations log
+  2. If ops count > 1000, create new snapshot in background
+  3. Delete old operations
 
 **Benefits**:
 
-- Reduces storage
-- Faster document loading
-- Lower memory usage in Document Service
+- **Storage**: 1 MB per document → 50 KB (95% reduction)
+- **Load Performance**: Apply 1000 ops instead of 10,000 (10x faster)
+- **Memory**: Keep only snapshot + recent ops in RAM per active document
+- **Cost**: 50 TB → 2.5 TB storage (massive savings)
+
+**For Versioning Support**:
+
+If you need version history (like Google Docs "See version history"):
+- Keep snapshots at regular intervals (hourly/daily)
+- Store snapshot metadata: timestamp, author, operation range
+- Example:
+  ```
+  Snapshots:
+    - v1000 @ 2025-11-03 10:00 AM: "Version from morning"
+    - v2000 @ 2025-11-03 2:00 PM: "Version from afternoon"
+    - v3000 @ 2025-11-03 6:00 PM: "Version from evening"
+  Current ops: 3001-3500
+  ```
+- Users can revert to any snapshot
+- Trade-off: More storage, but bounded by snapshot frequency
 
 ## Key Learnings & Insights
 
