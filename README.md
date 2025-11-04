@@ -24,6 +24,10 @@ A collection of system design notes, diagrams, and architectural deep-dives for 
 
 - **[Google Maps System Design](./google-maps-learnings.md)** - Routing algorithms, graph databases, real-time traffic updates with Kafka/Flink
 
+### Search & Autocomplete
+
+- **[Google Autocomplete System Design](./google-autocomplete.md)** - Search suggestions, autocomplete, ranking algorithms, caching strategies
+
 ---
 
 ## Notes
