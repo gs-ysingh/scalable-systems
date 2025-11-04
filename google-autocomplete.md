@@ -40,12 +40,16 @@ Design a typeahead/autocomplete system that provides real-time search suggestion
 ## API Design
 
 ```http
-GET /suggestions?prefix={prefix}&userId={userId}&limit={N} 
+GET /suggestions?prefix={prefix}&limit={N}
+  Headers: Authorization: Bearer {token}
   -> { suggestions: [{ text, score, type }] }
 
-POST /search { userId, query, timestamp }
+POST /search { query, timestamp }
+  Headers: Authorization: Bearer {token}
   -> { success: true }
 ```
+
+**Note**: `userId` is extracted from the authenticated session/JWT token, not passed as a parameter. This is more secure and follows REST best practices.
 
 **Response Example**:
 ```json
@@ -62,6 +66,140 @@ POST /search { userId, query, timestamp }
 
 ## High-Level Design
 
+### Simple Approach (Initial Version)
+
+```
+┌──────────┐
+│  Client  │ (Types search query)
+└────┬─────┘
+     │
+     ▼
+┌─────────────────┐
+│ Load Balancer   │
+└────┬────────────┘
+     │
+     ├─────────────────────────────────────┐
+     │                                     │
+     ▼                                     ▼
+┌──────────────────┐              ┌──────────────────┐
+│ Query Service    │              │ Data Gathering   │
+│                  │              │    Service       │
+│ • Receives prefix│              │                  │
+│ • Queries DB     │              │ • Logs searches  │
+│   using LIKE     │              │ • Updates freq   │
+│                  │              │                  │
+└────┬─────────────┘              └────┬─────────────┘
+     │                                 │
+     ▼                                 ▼
+┌─────────────────────────────────────────┐
+│           Database (MySQL/Postgres)     │
+│                                         │
+│  Table: search_queries                  │
+│  ┌──────────┬───────────┬────────────┐ │
+│  │  query   │ frequency │ last_update│ │
+│  ├──────────┼───────────┼────────────┤ │
+│  │ facebook │  95000    │ 2025-11-04 │ │
+│  │ face ma..│  45000    │ 2025-11-04 │ │
+│  │ factory  │  12000    │ 2025-11-04 │ │
+│  └──────────┴───────────┴────────────┘ │
+│                                         │
+│  Query: SELECT query, frequency         │
+│         FROM search_queries             │
+│         WHERE query LIKE 'fac%'         │
+│         ORDER BY frequency DESC         │
+│         LIMIT 10                        │
+└─────────────────────────────────────────┘
+```
+
+**Limitations of LIKE Query Approach:**
+- ❌ Slow for large datasets (millions of queries)
+- ❌ No index optimization for prefix matching
+- ❌ Full table scan required
+- ❌ Cannot handle billions of searches/day
+- ❌ High latency (100ms+)
+
+**Alternative Simple Approach: In-Memory Trie**
+
+Instead of using database LIKE queries, you can also use a Trie data structure directly:
+
+```
+┌──────────────────┐              ┌──────────────────┐
+│ Query Service    │              │ Data Gathering   │
+│                  │              │    Service       │
+│ • Receives prefix│              │                  │
+│ • Queries Trie   │              │ • Logs searches  │
+│   in-memory      │              │ • Updates DB     │
+│                  │              │                  │
+└────┬─────────────┘              └────┬─────────────┘
+     │                                 │
+     ▼                                 │
+┌─────────────┐                        │
+│ Trie Cache  │                        │
+│ (In-Memory) │                        │
+│             │◄───────────────────────┤
+│ • Fast O(k) │         Periodic       │
+│   lookup    │         Rebuild        │
+│ • No DB hit │      (hourly/daily)    │
+└─────────────┘                        │
+                                       ▼
+                              ┌─────────────────┐
+                              │    Database     │
+                              │ (query + freq)  │
+                              └─────────────────┘
+```
+
+**Key Insight: Trie doesn't need real-time updates**
+- ✅ Build Trie from database periodically (hourly or daily)
+- ✅ Serve all queries from in-memory Trie (fast lookups)
+- ✅ Log searches to database asynchronously
+- ✅ Rebuild Trie on schedule (not on every search)
+- ✅ Much faster than LIKE queries (O(k) vs O(n))
+
+**Trade-offs:**
+- Freshness: New trending queries appear after rebuild (acceptable delay)
+- Memory: Entire Trie must fit in server memory
+- Simple to implement for small-to-medium scale
+
+**This approach works for:**
+- Small scale (< 100k unique queries)
+- Low traffic (< 1k requests/second)
+- MVP or prototype phase
+
+### Scalable Approach (Production Version)
+
+```
+┌──────────┐
+│  Client  │ (Types search query)
+└────┬─────┘
+     │
+     ▼
+┌─────────────────┐      ┌──────────────┐      ┌─────────────┐
+│ Load Balancer   │─────▶│   Search     │─────▶│   Kafka     │
+│                 │      │   Service    │      │  (Events)   │
+└─────────────────┘      └──────────────┘      └──────┬──────┘
+                                                       │
+                         ┌─────────────────────────────┤
+                         │                             │
+                         ▼                             ▼
+                  ┌─────────────┐            ┌─────────────────┐
+                  │  Analytics  │            │   Data Lake     │
+                  │  Service    │───────────▶│  (S3/Hadoop)    │
+                  └─────────────┘            └────────┬────────┘
+                                                      │
+                                                      │ (Reads aggregated data)
+                                                      │
+                                               ┌──────┴──────┐
+                                               │Trie Builder │
+                                               │  Service    │
+                                               └──────┬──────┘
+                                                      │
+                                                      ▼
+                                               ┌─────────────┐
+                                               │Redis Cluster│
+                                               │   (Trie)    │
+                                               └─────────────┘
+```
+
 ### 1. Collecting Search Data
 
 **Components**:
@@ -77,7 +215,18 @@ POST /search { userId, query, timestamp }
 3. Kafka persists search event: `{ userId, query, timestamp, location, device }`
 4. Analytics Service consumes from Kafka
 5. Aggregate data written to Data Lake
-6. Background jobs compute query popularity/rankings
+6. Trie Builder reads from Data Lake and updates Redis
+
+**Diagram**:
+```
+User Search → Search Service → Kafka → Analytics Service → Data Lake
+                                                               │
+                                                               ▼
+                                                        Trie Builder
+                                                               │
+                                                               ▼
+                                                            Redis
+```
 
 **Why Kafka?**
 - Decouples search service from analytics
@@ -115,10 +264,16 @@ book(5k)  booking(3k)
 **Storage**: Serialize trie and store in distributed cache (Redis)
 
 **Building Process**:
-1. Analytics service computes top queries from search logs (daily/hourly)
-2. Trie Builder service constructs/updates trie
-3. Each node stores: character, children pointers, top suggestions with scores
-4. Serialize trie to Redis (partitioned by prefix)
+1. Analytics service aggregates search data and writes to Data Lake
+2. Trie Builder service reads aggregated query frequencies from Data Lake
+3. Trie Builder constructs/updates trie structure
+4. Each node stores: character, children pointers, top suggestions with scores
+5. Trie Builder serializes trie to Redis (partitioned by prefix)
+
+**Note**: Trie Builder is independent of Analytics Service - it only reads from Data Lake. This decoupling allows:
+- Analytics can be updated without affecting trie building
+- Trie Builder can run on its own schedule (hourly/daily)
+- Multiple consumers can process Data Lake data independently
 
 **Optimization**: Pre-compute top N suggestions at each node to avoid runtime sorting
 - Node "fa" stores: ["facebook" (95k), "face masks" (45k), "fashion" (32k), ...]
@@ -132,14 +287,49 @@ book(5k)  booking(3k)
 - Redis Cluster (distributed trie storage)
 - User Profile Service (personalization)
 
+**Diagram**:
+```
+┌──────────┐
+│  Client  │ Types "fac"
+└────┬─────┘
+     │
+     ▼
+┌─────────────────┐ (L2 Cache - CDN)
+│   CDN / Edge    │ Cache Hit? → Return suggestions
+└────┬────────────┘
+     │ Cache Miss
+     ▼
+┌─────────────────┐
+│ Load Balancer   │
+└────┬────────────┘
+     │
+     ▼
+┌──────────────────────────────┐
+│  Autocomplete Service        │
+│  1. Extract userId from JWT  │
+│  2. Query Redis for prefix   │──────┐
+│  3. Fetch personalization    │      │
+│  4. Merge & rank results     │      │
+└──────────────────────────────┘      │
+     │                │                │
+     ▼                ▼                ▼
+┌─────────────┐  ┌──────────────┐  ┌─────────────┐
+│Redis Cluster│  │ DynamoDB+DAX │  │   Client    │
+│   (Trie)    │  │ (User Hist)  │  │  (L1 Cache) │
+└─────────────┘  └──────────────┘  └─────────────┘
+
+Response: ["facebook", "face masks", "factory", ...]
+```
+
 **Flow**:
 1. User types "fac" in search box
-2. Client sends `GET /suggestions?prefix=fac&userId=123&limit=5`
-3. Autocomplete Service queries Redis for "fac" node
-4. Retrieve pre-computed top suggestions from node metadata
-5. Fetch user's recent searches from User Profile Service
-6. Merge and rank: 70% popular + 30% personalized
-7. Return top 5 suggestions in < 50ms
+2. Client sends `GET /suggestions?prefix=fac&limit=5` (with auth token in header)
+3. Autocomplete Service extracts userId from session/JWT token
+4. Autocomplete Service queries Redis for "fac" node
+5. Retrieve pre-computed top suggestions from node metadata
+6. Fetch user's recent searches from User Profile Service (using userId)
+7. Merge and rank: 70% popular + 30% personalized
+8. Return top 5 suggestions in < 50ms
 
 **Caching Strategy**:
 - **L1 Cache** (Client-side): Cache last 100 prefixes locally for 5 minutes
@@ -155,6 +345,32 @@ book(5k)  booking(3k)
 
 **Solution: Partition by Prefix**
 
+**Diagram**:
+```
+Full Trie (30 GB) → Partitioned across Redis Cluster
+
+┌─────────────────────────────────────────────────────┐
+│              Consistent Hash Ring                   │
+│                                                      │
+│   ┌──────────┐    ┌──────────┐    ┌──────────┐    │
+│   │ Shard 0  │    │ Shard 1  │    │ Shard 2  │    │
+│   │          │    │          │    │          │    │
+│   │ a*, b*   │    │ c*, d*   │    │ e*, f*   │    │
+│   │ (3 GB)   │    │ (3 GB)   │    │ (3 GB)   │    │
+│   └─────┬────┘    └─────┬────┘    └─────┬────┘    │
+│         │               │               │          │
+│         ▼               ▼               ▼          │
+│   ┌──────────┐    ┌──────────┐    ┌──────────┐    │
+│   │ Replica  │    │ Replica  │    │ Replica  │    │
+│   │  Slave   │    │  Slave   │    │  Slave   │    │
+│   └──────────┘    └──────────┘    └──────────┘    │
+└─────────────────────────────────────────────────────┘
+
+Query "facebook" → hash("fa") → Shard 2
+Query "amazon" → hash("am") → Shard 0
+```
+
+**Partitioning Strategy**:
 - Split trie into smaller tries based on first 1-2 characters
 - "a*" → Trie Partition 0
 - "b*" → Trie Partition 1
@@ -198,6 +414,42 @@ Value: {
 
 **Solution: Batch Updates + Incremental Refresh**
 
+**Diagram**:
+```
+                    ┌─────────────────┐
+Search Events ─────▶│     Kafka       │
+                    └────┬───────┬────┘
+                         │       │
+                         │       └─────────────────────┐
+                         │                             │
+                         ▼                             ▼
+              ┌──────────────────┐         ┌─────────────────┐
+              │ Stream Processing│         │   Data Lake     │
+              │  (Flink/Spark)   │         │   (S3/HDFS)     │
+              │                  │         └────────┬────────┘
+              │ • 1-min windows  │                  │
+              │ • Detect spikes  │                  │
+              │ • Trending boost │                  ▼
+              └────────┬─────────┘         ┌─────────────────┐
+                       │                   │ Batch Pipeline  │
+                       │                   │  (MapReduce)    │
+                       │                   │                 │
+                       │                   │ • Daily aggr.   │
+                       │                   │ • Build trie    │
+                       │                   └────────┬────────┘
+                       │                            │
+                       └──────┬─────────────────────┘
+                              │
+                              ▼
+                   ┌─────────────────────┐
+                   │   Redis Cluster     │
+                   │  (Updated Trie)     │
+                   │                     │
+                   │ score = 0.8×batch   │
+                   │       + 0.2×realtime│
+                   └─────────────────────┘
+```
+
 **Architecture**:
 1. **Real-time Pipeline** (seconds to minutes):
    - Stream processing (Spark Streaming / Flink)
@@ -240,6 +492,50 @@ Decay: Reduce boost over 24 hours back to organic ranking
 ### 3. Personalization
 
 **Goal**: Mix global popular suggestions with user-specific history.
+
+**Diagram**:
+```
+User types "fac"
+     │
+     ▼
+┌──────────────────────┐
+│ Autocomplete Service │
+└─────┬───────────┬────┘
+      │           │
+      │           │ (Parallel requests)
+      │           │
+      ▼           ▼
+┌─────────┐  ┌────────────────┐
+│  Redis  │  │  DynamoDB+DAX  │
+│ (Trie)  │  │ (User History) │
+│         │  │                │
+│ Global  │  │ userId: 123    │
+│ Popular │  │ ┌────────────┐ │
+│         │  │ │"facebook"  │ │
+│"facebook│  │ │"face rec"  │ │
+│ (95k)"  │  │ │"factory"   │ │
+│"face    │  │ └────────────┘ │
+│ masks   │  │  (prefix=fac)  │
+│ (45k)"  │  └────────────────┘
+└─────────┘
+      │           │
+      └─────┬─────┘
+            ▼
+     ┌─────────────┐
+     │   Merge &   │
+     │    Rank     │
+     │             │
+     │ 70% Global  │
+     │ 30% Personal│
+     └──────┬──────┘
+            │
+            ▼
+     ["facebook" (trending),
+      "facebook login" (popular),
+      "face recognition" (personal),
+      "face masks" (popular),
+      "factory" (personal)]
+```
 
 **Data Storage**:
 - **User Search History**: DynamoDB
