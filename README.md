@@ -28,6 +28,10 @@ A collection of system design notes, diagrams, and architectural deep-dives for 
 
 - **[Google Autocomplete System Design](./google-autocomplete.md)** - Search suggestions, autocomplete, ranking algorithms, caching strategies
 
+### Web Crawling
+
+- **[Web Crawler System Design](./webcrawler.md)** - Web crawling for search engines and LLM training, fault tolerance, politeness, distributed crawling
+
 ---
 
 ## Notes
