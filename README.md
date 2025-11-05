@@ -40,6 +40,10 @@ A collection of system design notes, diagrams, and architectural deep-dives for 
 
 - **[Web Crawler System Design](./webcrawler.md)** - Web crawling for search engines and LLM training, fault tolerance, politeness, distributed crawling
 
+### E-commerce & Auctions
+
+- **[Online Auction System Design](./online-auction.md)** - Bidding system, strong consistency (OCC), real-time updates (SSE), fault tolerance (Kafka), dealing with contention
+
 ---
 
 ## Notes
