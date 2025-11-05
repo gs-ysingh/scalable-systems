@@ -4,6 +4,10 @@ A collection of system design notes, diagrams, and architectural deep-dives for 
 
 ## 📚 System Design Case Studies
 
+### Social Media & Feeds
+
+- **[News Feed System Design](./feeds.md)** - Facebook/Twitter-style feeds, fan-out strategies, precomputed feeds, DynamoDB indexing
+
 ### Communication & Messaging Platforms
 
 - **[WhatsApp System Design](./whatsapp-docs.md)** - Real-time messaging, offline messages, group chats, end-to-end encryption
