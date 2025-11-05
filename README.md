@@ -32,6 +32,10 @@ A collection of system design notes, diagrams, and architectural deep-dives for 
 
 - **[Google Autocomplete System Design](./google-autocomplete.md)** - Search suggestions, autocomplete, ranking algorithms, caching strategies
 
+### URL Management
+
+- **[Bit.ly / URL Shortener System Design](./bit-ly.md)** - URL shortening, short code generation, read-heavy scaling, caching strategies, counter batching
+
 ### Web Crawling
 
 - **[Web Crawler System Design](./webcrawler.md)** - Web crawling for search engines and LLM training, fault tolerance, politeness, distributed crawling
