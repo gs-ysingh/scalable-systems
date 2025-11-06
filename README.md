@@ -36,6 +36,10 @@ A collection of system design notes, diagrams, and architectural deep-dives for 
 
 - **[Bit.ly / URL Shortener System Design](./bit-ly.md)** - URL shortening, short code generation, read-heavy scaling, caching strategies, counter batching
 
+### API Infrastructure
+
+- **[Rate Limiter System Design](./rate-limiter.md)** - Token bucket algorithm, Redis-based implementation, horizontal scaling, handling 1M req/sec
+
 ### Web Crawling
 
 - **[Web Crawler System Design](./webcrawler.md)** - Web crawling for search engines and LLM training, fault tolerance, politeness, distributed crawling
