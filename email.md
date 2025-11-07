@@ -272,6 +272,37 @@ Body:
              └──────────┘          └──────────┘
 ```
 
+### Example: End-to-End Delivery Flow
+
+Suppose `a@microsoft.com` sends an email to `b@gmail.com`.
+
+1. **Compose** – Yogesh uses an email client (Gmail, Outlook, Apple Mail). On Send, the client speaks SMTP to the outgoing mail server.
+2. **Submit to Outgoing Server** – The Microsoft SMTP server (`smtp.microsoft.com`) authenticates the user, adds routing headers, and performs DNS MX lookup for `gmail.com`.
+3. **Resolve Recipient MX** – DNS returns Gmail’s MX (e.g. `aspmx.l.google.com`). The sending server now knows where to deliver.
+4. **SMTP Transfer** – The server uses SMTP commands (EHLO, MAIL FROM, RCPT TO, DATA, QUIT) to transmit the message.
+5. **Reception & Filtering** – Gmail validates SPF, DKIM, DMARC, runs spam/phishing/malware checks, then stores the message.
+6. **User Access** – Aradhana’s client connects (IMAP preferred; POP3 legacy) and fetches headers then body.
+7. **Render** – Client displays the message; attachments may be fetched lazily.
+
+```text
+[Sender Client] --SMTP--> [Sender SMTP] --SMTP--> [Gmail MX] --Store--> [Mailbox DB]
+    ^                                                          |
+    |                                                          v
+  (Compose)                                       IMAP/POP   [Recipient Client]
+```
+
+Key receipt checks: IP reputation, SPF, DKIM signature, DMARC policy, spam score, virus scan.
+
+Summary Diagram
+[You] Outlook/Gmail App
+     │ (SMTP)
+     ▼
+[Your Mail Server]  ---DNS(MX)--->  [Recipient Mail Server]
+     │                                   │
+     │                                   ▼
+     └──────────────> [Mailbox Storage] -- (IMAP/POP3) --> [Recipient Device]
+
+
 ### 1. Send Email
 
 **Flow**:
