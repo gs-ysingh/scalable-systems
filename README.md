@@ -11,6 +11,8 @@ A collection of system design notes, diagrams, and architectural deep-dives for 
 ### Communication & Messaging Platforms
 
 - **[WhatsApp System Design](./whatsapp-docs.md)** - Real-time messaging, offline messages, group chats, end-to-end encryption
+- **[Video Conference System Design](./video-conference.md)** - Video conferencing platform, WebRTC, media servers, scaling strategies
+- **[Email System Design](./email.md)** - Email infrastructure, SMTP/IMAP, storage, spam filtering, delivery mechanisms
 
 ### Collaboration Tools
 
