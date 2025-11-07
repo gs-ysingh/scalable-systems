@@ -140,6 +140,86 @@ WebSocket connection established at `wss://signal.service/meetings/{meetingId}`
 
 **Key Learning**: WebRTC handles actual media transmission. Signaling server only exchanges connection setup information (SDP, ICE candidates). Never send actual video/audio through WebSocket.
 
+### WebRTC Overview
+
+#### What is WebRTC?
+
+WebRTC (Web Real-Time Communication) is a set of browser APIs and protocols enabling peer‑to‑peer real‑time media (audio/video) and data exchange. After an initial signaling phase, media flows directly between peers (or via SFU) with:
+
+- Real-time audio/video streams
+- Optional arbitrary data (editor ops, cursor moves, whiteboard state)
+- Low latency (< 100 ms under good network conditions)
+- NAT traversal via ICE + STUN + TURN
+- Built‑in congestion control + encryption (DTLS-SRTP)
+
+#### Example Context: Collaborative Editing
+
+Multiple browsers (A, B, C) collaboratively edit a document. Keystroke operations must propagate near-instantly. WebRTC DataChannels provide sub‑100ms delivery while media tracks (optional) add voice/video presence.
+
+#### Flow Breakdown
+
+1. Signaling (custom over WebSocket/HTTP): exchange SDP offer/answer + ICE candidates.
+2. ICE/STUN/TURN: discover viable network paths; TURN relays as fallback.
+3. DataChannel Establishment: peers (or peer↔SFU) open reliable/unreliable channels.
+4. Media Tracks (optional): add audio/video/screen tracks to existing RTCPeerConnection.
+5. Server Synchronization: periodic persistence + conflict resolution through backend APIs; P2P for immediacy, server for durability.
+
+#### Minimal DataChannel Example
+
+```javascript
+const pc = new RTCPeerConnection();
+const channel = pc.createDataChannel('doc-updates', { ordered: true });
+
+channel.onopen = () => channel.send(JSON.stringify({ type: 'hello' }));
+channel.onmessage = (e) => applyOperation(JSON.parse(e.data));
+
+// Example operation packet
+// { "type": "insert", "pos": 12, "text": "A" }
+```
+
+#### Adding Optional Media
+
+```javascript
+const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+for (const track of stream.getTracks()) pc.addTrack(track, stream);
+
+// Screen share later
+const screen = await navigator.mediaDevices.getDisplayMedia({ video: true });
+pc.addTrack(screen.getVideoTracks()[0], screen);
+```
+
+#### Architecture (Signaling + P2P)
+
+```text
+┌────────────────────────┐
+│       Signaling        │
+│   (WebSocket / HTTP)   │
+└────────────┬──────────┘
+                   │
+    ┌─────────┴─────────┐
+    │                   │
+┌───────┐         ┌───────┐
+│Browser│◄─WebRTC─►│Browser│
+│   A   │         │   B   │
+└───────┘         └───────┘
+                   │
+             (Optional)
+                   ▼
+          ┌──────────┐
+          │  TURN /  │
+          │   ICE    │
+          └──────────┘
+```
+
+#### Why WebRTC Here?
+
+- Low latency collaboration
+- Offloads server bandwidth (P2P or SFU selective forwarding)
+- Unified primitives for media + data
+- Built-in encryption + congestion control
+
+> Summary: Use WebRTC for live media + ephemeral collaboration state; persist authoritative state via backend services.
+
 ## High-Level Design
 
 ### Architecture Overview
